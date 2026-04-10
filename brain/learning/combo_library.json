@@ -1,0 +1,91 @@
+{
+  "base_forward_o5": [
+    "MOVE_FORWARD",
+    "LIGHT_ATTACK",
+    "LIGHT_ATTACK",
+    "LIGHT_ATTACK",
+    "LIGHT_ATTACK",
+    "LIGHT_ATTACK"
+  ],
+  "base_backward_o4": [
+    "MOVE_BACKWARD",
+    "LIGHT_ATTACK",
+    "LIGHT_ATTACK",
+    "LIGHT_ATTACK",
+    "LIGHT_ATTACK"
+  ],
+  "base_down_o": [
+    "CROUCH",
+    "LIGHT_ATTACK"
+  ],
+  "base_up_o": [
+    "JUMP",
+    "LIGHT_ATTACK"
+  ],
+  "base_up_p": [
+    "JUMP",
+    "HEAVY_ATTACK"
+  ],
+  "base_down_p": [
+    "CROUCH",
+    "HEAVY_ATTACK"
+  ],
+  "base_forward_p3": [
+    "MOVE_FORWARD",
+    "HEAVY_ATTACK",
+    "HEAVY_ATTACK",
+    "HEAVY_ATTACK"
+  ],
+  "base_backward_p3": [
+    "MOVE_BACKWARD",
+    "HEAVY_ATTACK",
+    "HEAVY_ATTACK",
+    "HEAVY_ATTACK"
+  ],
+  "rush_o6": [
+    "MOVE_FORWARD",
+    "LIGHT_ATTACK",
+    "LIGHT_ATTACK",
+    "LIGHT_ATTACK",
+    "LIGHT_ATTACK",
+    "LIGHT_ATTACK",
+    "LIGHT_ATTACK"
+  ],
+  "rush_mix": [
+    "MOVE_FORWARD",
+    "LIGHT_ATTACK",
+    "HEAVY_ATTACK",
+    "LIGHT_ATTACK",
+    "HEAVY_ATTACK"
+  ],
+  "jump_in": [
+    "JUMP",
+    "MOVE_FORWARD",
+    "LIGHT_ATTACK",
+    "HEAVY_ATTACK"
+  ],
+  "low_mix": [
+    "CROUCH",
+    "LIGHT_ATTACK",
+    "LIGHT_ATTACK",
+    "HEAVY_ATTACK"
+  ],
+  "combo_2_s_o": [
+    "CROUCH",
+    "LIGHT_ATTACK"
+  ],
+  "combo_3_w_o": [
+    "JUMP",
+    "LIGHT_ATTACK"
+  ],
+  "combo_4_a_o": [
+    "MOVE_BACKWARD",
+    "LIGHT_ATTACK"
+  ],
+  "guard_punish": [
+    "MOVE_BACKWARD",
+    "CROUCH",
+    "LIGHT_ATTACK",
+    "HEAVY_ATTACK"
+  ]
+}

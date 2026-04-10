@@ -1,0 +1,37 @@
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.venv/
+venv/
+.env
+
+brain/models/
+
+ui/.next/
+ui/node_modules/
+
+muscles/build/
+*.dll
+*.lib
+*.exp
+
+.DS_Store
+Thumbs.db
+
+# Runtime logs and captures
+*.log
+crash_log.txt
+test_output.txt
+
+# Local Python/IDE cache
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.vscode/
+
+# Model weights and large generated data
+yolov8*.pt
+brain/learning/episodes/
+brain/learning/labels/
+brain/learning/episode_history.jsonl

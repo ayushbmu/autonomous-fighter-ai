@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
+from typing import Tuple
 
 
 def _as_int(name: str, default: int) -> int:
@@ -24,6 +25,38 @@ def _as_float(name: str, default: float) -> float:
         return default
 
 
+def _as_bool(name: str, default: bool) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    normalized = value.strip().lower()
+    if normalized in {"1", "true", "yes", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "off"}:
+        return False
+    return default
+
+
+def _as_roi(name: str, default: Tuple[float, float, float, float]) -> Tuple[float, float, float, float]:
+    value = os.getenv(name)
+    if value is None:
+        return default
+
+    parts = [part.strip() for part in value.split(",") if part.strip()]
+    if len(parts) != 4:
+        return default
+
+    try:
+        x0, y0, x1, y1 = (float(part) for part in parts)
+    except ValueError:
+        return default
+
+    if not (0.0 <= x0 < x1 <= 1.0 and 0.0 <= y0 < y1 <= 1.0):
+        return default
+
+    return (x0, y0, x1, y1)
+
+
 @dataclass(frozen=True)
 class RuntimeSettings:
     api_host: str = "127.0.0.1"
@@ -37,6 +70,14 @@ class RuntimeSettings:
     key_tap_min_delay_ms: int = 10
     key_tap_max_delay_ms: int = 30
     min_action_confidence: float = 0.3
+    hud_debug_overlay: bool = True
+    hud_health_left_roi: Tuple[float, float, float, float] = (0.05, 0.03, 0.46, 0.09)
+    hud_health_right_roi: Tuple[float, float, float, float] = (0.54, 0.03, 0.95, 0.09)
+    hud_shadow_roi: Tuple[float, float, float, float] = (0.07, 0.09, 0.45, 0.14)
+    hud_shadow_h_min: int = 88
+    hud_shadow_h_max: int = 135
+    hud_shadow_sat_min: int = 90
+    hud_shadow_val_min: int = 70
 
 
 @dataclass(frozen=True)
@@ -59,4 +100,12 @@ def load_runtime_settings() -> RuntimeSettings:
         key_tap_min_delay_ms=_as_int("AF_KEY_TAP_MIN_MS", 10),
         key_tap_max_delay_ms=_as_int("AF_KEY_TAP_MAX_MS", 30),
         min_action_confidence=_as_float("AF_MIN_ACTION_CONFIDENCE", 0.55),
+        hud_debug_overlay=_as_bool("AF_HUD_DEBUG_OVERLAY", True),
+        hud_health_left_roi=_as_roi("AF_HUD_HEALTH_LEFT_ROI", (0.05, 0.03, 0.46, 0.09)),
+        hud_health_right_roi=_as_roi("AF_HUD_HEALTH_RIGHT_ROI", (0.54, 0.03, 0.95, 0.09)),
+        hud_shadow_roi=_as_roi("AF_HUD_SHADOW_ROI", (0.07, 0.09, 0.45, 0.14)),
+        hud_shadow_h_min=_as_int("AF_HUD_SHADOW_H_MIN", 88),
+        hud_shadow_h_max=_as_int("AF_HUD_SHADOW_H_MAX", 135),
+        hud_shadow_sat_min=_as_int("AF_HUD_SHADOW_S_MIN", 90),
+        hud_shadow_val_min=_as_int("AF_HUD_SHADOW_V_MIN", 70),
     )

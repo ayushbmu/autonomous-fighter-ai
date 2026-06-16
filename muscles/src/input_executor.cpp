@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <map>
 #include <random>
 #include <thread>
 
@@ -9,6 +10,9 @@
 #include <windows.h>
 
 namespace {
+// Track pressed keys globally to enable cleanup
+std::map<uint16_t, bool> pressed_keys;
+
 std::mt19937& rng() {
     static thread_local std::mt19937 generator(
         static_cast<uint32_t>(std::chrono::high_resolution_clock::now().time_since_epoch().count()));
@@ -44,10 +48,22 @@ void send_mouse_input(LONG dx, LONG dy, DWORD mouse_flags) {
 extern "C" {
 void af_press_key(uint16_t virtual_key) {
     send_keyboard_input(virtual_key, 0);
+    pressed_keys[virtual_key] = true;
 }
 
 void af_release_key(uint16_t virtual_key) {
     send_keyboard_input(virtual_key, KEYEVENTF_KEYUP);
+    pressed_keys[virtual_key] = false;
+}
+
+void af_reset_all_keys() {
+    // Force release all tracked keys
+    for (auto& [key, is_pressed] : pressed_keys) {
+        if (is_pressed) {
+            send_keyboard_input(key, KEYEVENTF_KEYUP);
+        }
+    }
+    pressed_keys.clear();
 }
 
 void af_tap_key(uint16_t virtual_key, uint32_t min_delay_ms, uint32_t max_delay_ms) {

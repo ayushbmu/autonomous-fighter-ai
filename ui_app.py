@@ -77,7 +77,7 @@ class BotControlWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("AutonomousFighter - Bot Control")
-        self.setGeometry(60, 40, 1100, 760)
+        self.setGeometry(60, 40, 800, 600)
         self.setMinimumSize(720, 480)
         self.setStyleSheet(self._get_stylesheet())
 

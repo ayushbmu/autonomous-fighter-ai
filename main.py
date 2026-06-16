@@ -21,7 +21,7 @@ from common.settings import RuntimeSettings, load_runtime_settings
 from muscles.python_wrapper import InputExecutor
 from perception.capture import CaptureRegion, ScreenCapture
 from perception.detector import FighterDetector
-from perception.pipeline import PerceptionPipeline
+from perception.pipeline import HudEstimatorConfig, PerceptionPipeline
 
 LOGGER = logging.getLogger("autonomous_fighter.main")
 
@@ -33,8 +33,10 @@ KEY_BINDINGS = {
     FighterAction.CROUCH: 0x53,         # S
     FighterAction.LIGHT_ATTACK: 0x4F,   # O
     FighterAction.HEAVY_ATTACK: 0x50,   # P (light kick)
-    FighterAction.SPECIAL: 0x4F,        # O (mapped to light attack)
+    FighterAction.SPECIAL: 0x4B,        # K (throwing knife)
 }
+
+SHADOW_SPECIAL_KEY = 0x4C  # L
 
 COMBO_LIBRARY = {
     "base_forward_o5": [
@@ -148,8 +150,16 @@ def execute_action(
     action: FighterAction,
     min_delay_ms: int,
     max_delay_ms: int,
+    shadow_meter_full: bool = False,
 ) -> None:
     if action == FighterAction.IDLE:
+        return
+
+    if action == FighterAction.SPECIAL:
+        if shadow_meter_full:
+            execute_shadow_special(executor, min_delay_ms, max_delay_ms)
+        else:
+            execute_throwing_knife(executor, min_delay_ms, max_delay_ms)
         return
 
     key = KEY_BINDINGS.get(action)
@@ -157,6 +167,29 @@ def execute_action(
         return
 
     executor.tap_key(key, min_delay_ms, max_delay_ms)
+
+
+def execute_throwing_knife(
+    executor: InputExecutor,
+    min_delay_ms: int,
+    max_delay_ms: int,
+) -> FighterAction:
+    executor.tap_key(KEY_BINDINGS[FighterAction.SPECIAL], min_delay_ms, max_delay_ms)
+    return FighterAction.SPECIAL
+
+
+def execute_shadow_special(
+    executor: InputExecutor,
+    min_delay_ms: int,
+    max_delay_ms: int,
+) -> FighterAction:
+    # Shadow move input: Forward + L.
+    executor.press_key(KEY_BINDINGS[FighterAction.MOVE_FORWARD])
+    try:
+        executor.tap_key(SHADOW_SPECIAL_KEY, min_delay_ms, max_delay_ms)
+    finally:
+        executor.release_key(KEY_BINDINGS[FighterAction.MOVE_FORWARD])
+    return FighterAction.SPECIAL
 
 
 def execute_block(
@@ -189,12 +222,19 @@ def execute_named_combo(
     min_delay_ms: int,
     max_delay_ms: int,
     combo_library: Dict[str, list[FighterAction]] | None = None,
+    shadow_meter_full: bool = False,
 ) -> FighterAction:
     source = combo_library or COMBO_LIBRARY
     sequence = source.get(combo_name, source.get("rush_o6", COMBO_LIBRARY["rush_o6"]))
     last_action = FighterAction.LIGHT_ATTACK
     for combo_action in sequence:
-        execute_action(executor, combo_action, min_delay_ms, max_delay_ms)
+        execute_action(
+            executor,
+            combo_action,
+            min_delay_ms,
+            max_delay_ms,
+            shadow_meter_full=shadow_meter_full,
+        )
         if combo_action in {FighterAction.LIGHT_ATTACK, FighterAction.HEAVY_ATTACK, FighterAction.SPECIAL}:
             last_action = combo_action
     return last_action
@@ -224,10 +264,18 @@ def execute_berserk_pressure(
     min_delay_ms: int,
     max_delay_ms: int,
     combo_library: Dict[str, list[FighterAction]] | None = None,
+    shadow_meter_full: bool = False,
 ) -> FighterAction:
     if enemy_airborne:
         if frame_index % 3 == 0:
-            return execute_named_combo(executor, "jump_in", min_delay_ms, max_delay_ms, combo_library=combo_library)
+            return execute_named_combo(
+                executor,
+                "jump_in",
+                min_delay_ms,
+                max_delay_ms,
+                combo_library=combo_library,
+                shadow_meter_full=shadow_meter_full,
+            )
 
         executor.tap_key(KEY_BINDINGS[FighterAction.MOVE_FORWARD], min_delay_ms, max_delay_ms)
         attack_action = FighterAction.HEAVY_ATTACK if attack_streak >= 2 or frame_index % 2 == 0 else FighterAction.LIGHT_ATTACK
@@ -244,7 +292,14 @@ def execute_berserk_pressure(
         return attack_action
 
     if attack_streak >= 4 or frame_index % 4 == 0:
-        return execute_named_combo(executor, "rush_mix", min_delay_ms, max_delay_ms, combo_library=combo_library)
+        return execute_named_combo(
+            executor,
+            "rush_mix",
+            min_delay_ms,
+            max_delay_ms,
+            combo_library=combo_library,
+            shadow_meter_full=shadow_meter_full,
+        )
 
     attack_action = FighterAction.LIGHT_ATTACK if frame_index % 2 == 0 else FighterAction.HEAVY_ATTACK
     executor.tap_key(KEY_BINDINGS[attack_action], min_delay_ms, max_delay_ms)
@@ -270,10 +325,15 @@ def should_block(
     attack_streak: int,
     frame_index: int,
 ) -> bool:
-    close_range_threat = distance < 0.2 and not enemy_airborne
-    unsure_and_close = distance < 0.26 and confidence_score < 0.58
-    anti_mash_guard = attack_streak <= 1 and frame_index % 3 == 0
-    return close_range_threat and (anti_mash_guard or unsure_and_close)
+    if enemy_airborne:
+        return False
+
+    very_close_threat = distance < 0.16
+    close_range_threat = distance < 0.24
+    unsure_state = confidence_score < 0.72
+    anti_mash_guard = attack_streak <= 2 and frame_index % 2 == 0
+    emergency_guard = very_close_threat and attack_streak <= 4
+    return emergency_guard or (close_range_threat and (anti_mash_guard or unsure_state))
 
 
 def to_observation(state: Dict[str, Any]) -> np.ndarray:
@@ -352,11 +412,15 @@ def main() -> None:
     args = parse_args(settings)
 
     stop_requested = False
+    executor: InputExecutor | None = None
 
     def _request_stop(signum: int, _frame: Any) -> None:
         nonlocal stop_requested
         stop_requested = True
         LOGGER.info("Received signal %s, stopping orchestrator loop.", signum)
+        # Force release all keys immediately
+        if executor is not None:
+            executor.reset_all_keys()
 
     signal.signal(signal.SIGINT, _request_stop)
     signal.signal(signal.SIGTERM, _request_stop)
@@ -371,7 +435,6 @@ def main() -> None:
     except Exception as e:
         LOGGER.error("✗ Failed to load InputExecutor: %s", e)
         raise
-    
     detector = FighterDetector(args.yolo)
     capture = ScreenCapture(
         CaptureRegion(args.left, args.top, args.width, args.height),
@@ -390,7 +453,20 @@ def main() -> None:
     LOGGER.info("  Capture thread target FPS: %.1f", args.capture_thread_fps)
     LOGGER.info("  Capture quality scale: %.2f", args.capture_quality_scale)
     
-    pipeline = PerceptionPipeline(capture, detector)
+    pipeline = PerceptionPipeline(
+        capture,
+        detector,
+        hud_config=HudEstimatorConfig(
+            health_left_roi=settings.hud_health_left_roi,
+            health_right_roi=settings.hud_health_right_roi,
+            shadow_roi=settings.hud_shadow_roi,
+            shadow_h_min=settings.hud_shadow_h_min,
+            shadow_h_max=settings.hud_shadow_h_max,
+            shadow_s_min=settings.hud_shadow_sat_min,
+            shadow_v_min=settings.hud_shadow_val_min,
+            debug_overlay=settings.hud_debug_overlay,
+        ),
+    )
     policy = build_runtime(args.model, deterministic=args.deterministic)
     LOGGER.info("✓ Policy runtime: %s", type(policy).__name__)
 
@@ -423,6 +499,8 @@ def main() -> None:
             obs = to_observation(state) if state is not None else np.zeros((10,), dtype=np.float32)
             distance = float(obs[2])
             enemy_airborne = float(obs[4]) > 0.5
+            shadow_meter = float((state or {}).get("shadow_meter", 0.0))
+            shadow_meter_full = bool((state or {}).get("shadow_full", False) or shadow_meter >= 0.98)
             selected_combo_name: str | None = None
             profile = combo_learner.live_strategy_profile(
                 distance=distance,
@@ -459,6 +537,7 @@ def main() -> None:
                     effective_min_delay,
                     effective_max_delay,
                     combo_library=active_combo_library,
+                    shadow_meter_full=shadow_meter_full,
                 )
                 if frame_count % debug_interval == 0:
                     LOGGER.debug("  → Opening pressure action: berserk %s", action.name)
@@ -470,6 +549,7 @@ def main() -> None:
                     effective_min_delay,
                     effective_max_delay,
                     combo_library=active_combo_library,
+                    shadow_meter_full=shadow_meter_full,
                 )
                 if frame_count % debug_interval == 0:
                     LOGGER.debug("  → No state fallback combo: rush_o6")
@@ -481,6 +561,7 @@ def main() -> None:
                     effective_min_delay,
                     effective_max_delay,
                     combo_library=active_combo_library,
+                    shadow_meter_full=shadow_meter_full,
                 )
                 if frame_count % debug_interval == 0:
                     LOGGER.debug("  → Low confidence punish combo: %s", selected_combo_name)
@@ -492,7 +573,8 @@ def main() -> None:
                     attack_streak=attack_streak,
                     frame_index=frame_count,
                 ):
-                    if frame_count % 2 == 0:
+                    action = execute_block(executor, effective_min_delay, effective_max_delay)
+                    if frame_count % 3 == 0 and confidence_score > 0.70:
                         selected_combo_name = "guard_punish"
                         action = execute_named_combo(
                             executor,
@@ -500,9 +582,8 @@ def main() -> None:
                             effective_min_delay,
                             effective_max_delay,
                             combo_library=active_combo_library,
+                            shadow_meter_full=shadow_meter_full,
                         )
-                    else:
-                        action = execute_block(executor, effective_min_delay, effective_max_delay)
                 else:
                     if combo_learner.should_feint(frame_count, profile):
                         execute_feint(executor, effective_min_delay, effective_max_delay)
@@ -515,6 +596,7 @@ def main() -> None:
                             effective_min_delay,
                             effective_max_delay,
                             combo_library=active_combo_library,
+                            shadow_meter_full=shadow_meter_full,
                         )
                     else:
                         if frame_count % dynamic_combo_interval == 0 or attack_streak >= 3:
@@ -525,6 +607,7 @@ def main() -> None:
                                 effective_min_delay,
                                 effective_max_delay,
                                 combo_library=active_combo_library,
+                                shadow_meter_full=shadow_meter_full,
                             )
                         else:
                             if profile.force_pressure or distance < 0.28 or attack_streak >= 2 or confidence_score > 0.8:
@@ -537,6 +620,7 @@ def main() -> None:
                                     effective_min_delay,
                                     effective_max_delay,
                                     combo_library=active_combo_library,
+                                    shadow_meter_full=shadow_meter_full,
                                 )
                             else:
                                 action = policy.choose_action(obs)
@@ -550,7 +634,13 @@ def main() -> None:
                                 FighterAction.CROUCH,
                             }:
                                 action = FighterAction.LIGHT_ATTACK
-                            execute_action(executor, action, effective_min_delay, effective_max_delay)
+                            execute_action(
+                                executor,
+                                action,
+                                effective_min_delay,
+                                effective_max_delay,
+                                shadow_meter_full=shadow_meter_full,
+                            )
 
                 if frame_count % debug_interval == 0:
                     LOGGER.debug("  → Action executed: %s", action.name)
@@ -597,6 +687,9 @@ def main() -> None:
             if elapsed < frame_budget:
                 time.sleep(frame_budget - elapsed)
     finally:
+        # Force release all keys before exiting
+        if executor is not None:
+            executor.reset_all_keys()
         capture.stop()
 
     LOGGER.info("Orchestrator stopped cleanly.")

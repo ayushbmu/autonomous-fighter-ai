@@ -50,9 +50,9 @@ def aggressive_reward(
         reward -= 1.4
 
     if blocked and under_pressure:
-        reward += 1.0
+        reward += 2.4
     elif under_pressure and not blocked:
-        reward -= 0.8
+        reward -= 1.8
 
     reward -= min(idle_frames, 30) * 0.08
     reward += max(0.0, 0.35 - distance_to_enemy) * distance_weight

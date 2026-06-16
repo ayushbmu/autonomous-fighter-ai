@@ -4,15 +4,39 @@ AutonomousFighter Launcher
 Pure Python/C++ Desktop Application (no web browser required)
 """
 
+from pathlib import Path
+import argparse
+import os
 import subprocess
 import sys
 import time
-import argparse
-import win32gui
-from pathlib import Path
+
+
+PROJECT_ROOT = Path(__file__).resolve().parent
+VENV_PYTHON = PROJECT_ROOT / ".venv" / "Scripts" / "python.exe"
+
+
+def ensure_project_python() -> None:
+    """Re-launch through the project venv when the current interpreter is wrong."""
+    current_python = Path(sys.executable).resolve()
+    expected_python = VENV_PYTHON.resolve()
+
+    if expected_python.exists() and current_python != expected_python:
+        os.execv(str(expected_python), [str(expected_python), str(Path(__file__).resolve()), *sys.argv[1:]])
+
+
+ensure_project_python()
+
+try:
+    import win32gui
+except ImportError:
+    win32gui = None
 
 def find_window_by_partial_name(partial_name: str):
     """Find game window by partial name match, prioritizing by size."""
+    if win32gui is None:
+        return []
+
     found = []
     
     def callback(hwnd, _):
@@ -48,7 +72,7 @@ def main():
     parser.add_argument("--model", default=None, help="Path to trained PPO model")
     args = parser.parse_args()
     
-    project_root = Path(__file__).parent
+    project_root = PROJECT_ROOT
     
     print("=" * 60)
     print("  AUTONOMOUS FIGHTER - Native Desktop Application")
@@ -58,6 +82,12 @@ def main():
     # Find game window if not specified
     game_title = args.window_title
     if not game_title:
+        if win32gui is None:
+            print("ERROR: pywin32 is not available in the current interpreter.")
+            print("Run the launcher through the project venv, for example:")
+            print(r"  .\.venv\Scripts\python.exe launcher.py")
+            sys.exit(1)
+
         print("\nSearching for game windows...")
         time.sleep(1)
         windows = find_window_by_partial_name("Shadow Fight")

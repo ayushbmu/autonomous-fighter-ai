@@ -34,17 +34,18 @@ except ImportError:
 
 def find_window_by_partial_name(partial_name: str):
     """Find game window by partial name match, prioritizing by size."""
-    if win32gui is None:
+    gui = win32gui
+    if gui is None:
         return []
 
     found = []
     
     def callback(hwnd, _):
-        if win32gui.IsWindowVisible(hwnd):
-            title = win32gui.GetWindowText(hwnd)
+        if gui.IsWindowVisible(hwnd):
+            title = gui.GetWindowText(hwnd)
             if partial_name.lower() in title.lower():
                 try:
-                    left, top, right, bottom = win32gui.GetWindowRect(hwnd)
+                    left, top, right, bottom = gui.GetWindowRect(hwnd)
                     width = right - left
                     height = bottom - top
                     # Game windows are typically substantial in size
@@ -56,7 +57,7 @@ def find_window_by_partial_name(partial_name: str):
         return True
     
     try:
-        win32gui.EnumWindows(callback, None)
+        gui.EnumWindows(callback, None)
     except:
         pass
     
@@ -68,7 +69,7 @@ def main():
     parser = argparse.ArgumentParser(description="AutonomousFighter Launcher")
     parser.add_argument("--window-title", help="Game window title to capture")
     parser.add_argument("--dll", default="muscles/build/Release/autonomous_fighter_muscles.dll")
-    parser.add_argument("--yolo", default="yolov8n.pt")
+    parser.add_argument("--yolo", default="yolov8m.pt")
     parser.add_argument("--model", default=None, help="Path to trained PPO model")
     args = parser.parse_args()
     
@@ -110,6 +111,12 @@ def main():
         "--dll", args.dll,
         "--yolo", args.yolo,
         "--window-title", game_title,
+        "--target-fps", "60",
+        "--capture-thread-fps", "60",
+        "--left", "0",
+        "--top", "0",
+        "--width", "1920",
+        "--height", "1080",
     ]
     if args.model:
         backend_cmd.extend(["--model", args.model])

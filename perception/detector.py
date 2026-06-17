@@ -26,13 +26,23 @@ class FighterDetector:
 
     def __init__(self, model_path: str, conf_threshold: float = 0.4) -> None:
         self.conf_threshold = conf_threshold
+        import torch
+        self.device = "cuda" if torch.cuda.is_available() else "cpu"
         self.model = YOLO(model_path) if YOLO is not None else None
+        if self.model is not None:
+            self.model.to(self.device)
 
     def detect(self, frame: np.ndarray) -> List[Detection]:
         if self.model is None:
             return []
 
-        results = self.model.predict(source=frame, conf=self.conf_threshold, verbose=False)
+        results = self.model.predict(
+            source=frame,
+            conf=self.conf_threshold,
+            verbose=False,
+            device=self.device,
+            half=(self.device == "cuda"),
+        )
         detections: List[Detection] = []
 
         if not results:

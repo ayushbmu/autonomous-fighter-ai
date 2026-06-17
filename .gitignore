@@ -35,3 +35,14 @@ yolov8*.pt
 brain/learning/episodes/
 brain/learning/labels/
 brain/learning/episode_history.jsonl
+
+# Explicitly requested exclusions for public release
+.venv/
+__pycache__/
+.pytest_cache/
+.vscode/
+crash_log
+test_output/
+window_settings.json
+yolov8m.pt
+yolov8n.pt

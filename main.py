@@ -6,6 +6,7 @@ import signal
 import sys
 import threading
 import time
+from dataclasses import asdict
 from pathlib import Path
 from typing import Any, Dict
 
@@ -19,7 +20,7 @@ from brain.strategy_memory import AdaptiveComboLearner
 from common.logging_config import configure_logging
 from common.settings import RuntimeSettings, load_runtime_settings
 from muscles.python_wrapper import InputExecutor
-from perception.capture import CaptureRegion, ScreenCapture
+from perception.capture import CaptureRegion, ScreenCapture, FpsCounter
 from perception.detector import FighterDetector
 from perception.pipeline import HudEstimatorConfig, PerceptionPipeline
 
@@ -382,7 +383,7 @@ def parse_args(settings: RuntimeSettings) -> argparse.Namespace:
     parser.add_argument("--width", type=int, default=settings.capture_width)
     parser.add_argument("--height", type=int, default=settings.capture_height)
     parser.add_argument("--window-title", default="Shadow Fight Arena", help="Track this active window title for capture region")
-    parser.add_argument("--target-fps", type=float, default=settings.target_fps)
+    parser.add_argument("--target-fps", type=float, default=60.0)
     parser.add_argument("--capture-thread-fps", type=float, default=60.0, help="Target FPS for dedicated screen capture thread")
     parser.add_argument(
         "--capture-quality-scale",
@@ -406,6 +407,102 @@ def parse_args(settings: RuntimeSettings) -> argparse.Namespace:
     return parser.parse_args()
 
 
+class SharedTelemetry:
+    def __init__(self) -> None:
+        self.lock = threading.Lock()
+        self.detections: list[Any] = []
+        self.hud_debug: Dict[str, Any] = {}
+        self.metadata: Dict[str, Any] = {
+            "current_action": "STANDBY",
+            "selected_combo": None,
+            "confidence_score": 0.0,
+            "attack_streak": 0,
+            "combo_scores": {},
+            "fight_memory": {},
+            "state": None,
+        }
+
+    def update_bot_data(self, detections: list[Any], hud_debug: Dict[str, Any], metadata: Dict[str, Any]) -> None:
+        with self.lock:
+            self.detections = list(detections)
+            self.hud_debug = dict(hud_debug) if hud_debug else {}
+            self.metadata = dict(metadata)
+
+    def get_snapshot(self) -> tuple[list[Any], Dict[str, Any], Dict[str, Any]]:
+        with self.lock:
+            return list(self.detections), dict(self.hud_debug), dict(self.metadata)
+
+
+def run_streaming_thread(
+    capture: ScreenCapture,
+    shared_telemetry: SharedTelemetry,
+    stop_event: threading.Event,
+    debug_overlay: bool = True,
+    target_fps: float = 60.0,
+) -> None:
+    from perception.visualize import draw_detections, encode_jpeg_base64
+    from dataclasses import asdict
+
+    frame_budget = 1.0 / target_fps
+    fps_counter = FpsCounter()
+
+    LOGGER.info("Streaming thread waiting for initial game frame...")
+    while not stop_event.is_set():
+        frame = capture.grab_latest_bgr()
+        if frame is not None and frame.size > 0:
+            break
+        time.sleep(0.02)
+
+    LOGGER.info("Streaming thread active. Target FPS: %.1f", target_fps)
+
+    while not stop_event.is_set():
+        started = time.perf_counter()
+
+        frame = capture.grab_latest_bgr()
+        if frame is None or frame.size == 0:
+            time.sleep(0.002)
+            continue
+
+        detections, hud_debug, metadata = shared_telemetry.get_snapshot()
+
+        annotated = draw_detections(
+            frame,
+            detections,
+            hud_debug=hud_debug if debug_overlay else None,
+        )
+
+        encoded = encode_jpeg_base64(annotated)
+        cap_stats = capture.get_capture_stats()
+
+        packet = {
+            "timestamp": time.time(),
+            "fps": float(fps_counter.tick()),
+            "capture_fps": float(cap_stats.get("capture_fps", 0.0)),
+            "current_action": metadata.get("current_action", "STANDBY"),
+            "selected_combo": metadata.get("selected_combo"),
+            "confidence_score": metadata.get("confidence_score", 0.0),
+            "attack_streak": metadata.get("attack_streak", 0),
+            "combo_scores": metadata.get("combo_scores", {}),
+            "fight_memory": metadata.get("fight_memory", {}),
+            "frame_shape": list(frame.shape),
+            "capture_region": {
+                "left": capture.region.left,
+                "top": capture.region.top,
+                "width": capture.region.width,
+                "height": capture.region.height,
+            },
+            "detections": [asdict(d) for d in detections],
+            "state": metadata.get("state"),
+            "live_frame_jpeg": encoded,
+        }
+
+        broadcast_sync(packet)
+
+        elapsed = time.perf_counter() - started
+        if elapsed < frame_budget:
+            time.sleep(frame_budget - elapsed)
+
+
 def main() -> None:
     configure_logging()
     settings = load_runtime_settings()
@@ -413,11 +510,13 @@ def main() -> None:
 
     stop_requested = False
     executor: InputExecutor | None = None
+    stream_stop_event = threading.Event()
 
     def _request_stop(signum: int, _frame: Any) -> None:
         nonlocal stop_requested
         stop_requested = True
         LOGGER.info("Received signal %s, stopping orchestrator loop.", signum)
+        stream_stop_event.set()
         # Force release all keys immediately
         if executor is not None:
             executor.reset_all_keys()
@@ -470,6 +569,16 @@ def main() -> None:
     policy = build_runtime(args.model, deterministic=args.deterministic)
     LOGGER.info("✓ Policy runtime: %s", type(policy).__name__)
 
+    # Start the background UI streaming thread
+    shared_telemetry = SharedTelemetry()
+    stream_thread = threading.Thread(
+        target=run_streaming_thread,
+        args=(capture, shared_telemetry, stream_stop_event, settings.hud_debug_overlay, 60.0),
+        name="telemetry-streamer",
+        daemon=True,
+    )
+    stream_thread.start()
+
     attack_streak = 0
     frame_budget = 1.0 / max(1.0, args.target_fps)
     LOGGER.info("Main loop started with target FPS %.1f", args.target_fps)
@@ -481,20 +590,24 @@ def main() -> None:
     combo_learner = AdaptiveComboLearner(args.fight_memory_dir)
     
     # Capture and log first frame to verify window detection
-    first_frame_data = pipeline.step()
+    first_frame = capture.grab_latest_bgr()
+    first_detections, first_state, first_hud = pipeline.process_frame(first_frame)
     LOGGER.info("First frame captured: shape=%s, detections=%d", 
-                first_frame_data.get('frame_shape'), 
-                len(first_frame_data.get('detections', [])))
+                list(first_frame.shape), 
+                len(first_detections))
     if capture.region:
         LOGGER.info("  Actual capture region: left=%d, top=%d, width=%d, height=%d",
                     capture.region.left, capture.region.top, capture.region.width, capture.region.height)
 
+    bot_fps_counter = FpsCounter()
+
     try:
         while not stop_requested:
             started = time.perf_counter()
-            output = pipeline.step()
+            frame = capture.grab_latest_bgr()
+            detections, state, hud_debug = pipeline.process_frame(frame)
+            bot_fps = bot_fps_counter.tick()
 
-            state = output.get("state")
             confidence_score = float((state or {}).get("confidence", 0.0))
             obs = to_observation(state) if state is not None else np.zeros((10,), dtype=np.float32)
             distance = float(obs[2])
@@ -515,7 +628,7 @@ def main() -> None:
 
             frame_count += 1
             if frame_count % debug_interval == 0:
-                detections_count = len(output.get("detections", []))
+                detections_count = len(detections)
                 LOGGER.debug("Frame %d: detections=%d, state=%s, confidence=%.3f",
                             frame_count, detections_count, state is not None, confidence_score)
 
@@ -650,26 +763,44 @@ def main() -> None:
             else:
                 attack_streak = max(0, attack_streak - 1)
 
+            # Update shared telemetry
+            shared_telemetry.update_bot_data(
+                detections=detections,
+                hud_debug=hud_debug,
+                metadata={
+                    "current_action": action.name,
+                    "selected_combo": selected_combo_name,
+                    "confidence_score": confidence_score,
+                    "attack_streak": attack_streak,
+                    "combo_scores": combo_learner.combo_scores,
+                    "fight_memory": combo_learner.current_status(),
+                    "state": state,
+                }
+            )
+
+            # Build local packet for combo learner (include raw_frame to save snapshots directly)
             packet = {
                 "timestamp": time.time(),
-                "fps": float(output.get("fps", 0.0)),
+                "fps": float(bot_fps),
                 "capture_fps": float(capture.get_capture_stats().get("capture_fps", 0.0)),
                 "current_action": action.name,
+                "selected_combo": selected_combo_name,
                 "confidence_score": confidence_score,
                 "attack_streak": attack_streak,
                 "combo_scores": combo_learner.combo_scores,
                 "fight_memory": combo_learner.current_status(),
-                "frame_shape": output.get("frame_shape"),
+                "frame_shape": list(frame.shape),
                 "capture_region": {
                     "left": capture.region.left,
                     "top": capture.region.top,
                     "width": capture.region.width,
                     "height": capture.region.height,
                 },
-                "detections": output.get("detections", []),
+                "detections": [asdict(d) for d in detections],
                 "state": state,
-                "live_frame_jpeg": output.get("live_frame_jpeg"),
+                "raw_frame": frame,
             }
+
             episode_summary = combo_learner.observe_step(packet, action, attack_streak, selected_combo_name)
             if episode_summary:
                 LOGGER.info(
@@ -681,7 +812,6 @@ def main() -> None:
                     episode_summary.get("average_confidence", 0.0),
                     episode_summary.get("strategy_bucket"),
                 )
-            broadcast_sync(packet)
 
             elapsed = time.perf_counter() - started
             if elapsed < frame_budget:
@@ -690,6 +820,8 @@ def main() -> None:
         # Force release all keys before exiting
         if executor is not None:
             executor.reset_all_keys()
+        stream_stop_event.set()
+        stream_thread.join(timeout=1.0)
         capture.stop()
 
     LOGGER.info("Orchestrator stopped cleanly.")

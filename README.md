@@ -1,205 +1,144 @@
-# AutonomousFighter
+# AutonomousFighter 🤖🥊
 
-Production-grade autonomous fighting agent with pure Python/C++ stack:
+An advanced, production-grade autonomous combat engine designed for **Shadow Fight Arena**, built using a high-performance Python and C++ stack. The system combines real-time Computer Vision, Reinforcement Learning, and low-level Windows input automation to orchestrate intelligent, human-like combat gameplay.
 
-- `perception`: Python OpenCV + YOLOv8 pipeline
-- `brain`: Gymnasium + Stable-Baselines3 PPO training/runtime
-- `muscles`: C++ SendInput DLL with jittered input timing
-- `api`: FastAPI WebSocket telemetry server
-- `ui_app.py`: PyQt6 native desktop application (no browser required)
-- `main.py`: orchestrator loop
+---
 
-All four phases are implemented:
+## 🌟 Core Technology Stack
 
-- Phase 1: C++ input DLL + Python ctypes wrapper
-- Phase 2: real-time capture + YOLO detection + relative state extraction + annotated live feed
-- Phase 3: Gymnasium environment + PPO train/eval pipeline + runtime policy selection
-- Phase 4: FastAPI WebSocket API + PyQt6 native desktop UI
+The engine's intelligence and reactivity are driven by three core pillars:
 
-## Project Layout
+1. **Visual Perception (OpenCV & YOLOv8)**
+   * **Target Detection:** A custom-trained **YOLOv8** model processes real-time screen captures to locate the player and enemy, drawing bounding boxes and estimating coordinates.
+   * **HUD Processing:** Custom **OpenCV** masking operations parse the screen’s head-up display in real time, calculating the health percentages of both fighters and estimating the shadow energy meter using HSV thresholding.
+   * **Telemetry Pipeline:** Integrates a multi-threaded frame capture wrapper (`mss`) running asynchronously to feed the perception pipeline without blocking the main combat thread.
+
+2. **Decision Making (Reinforcement Learning & Strategy Memory)**
+   * **Gymnasium Environment:** A custom-designed `AutonomousFighterEnv` models the combat as a Markov Decision Process (MDP) with a 10-dimensional continuous observation space and a discrete action space mapping to combat moves.
+   * **PPO Training:** Employs **Stable-Baselines3** to train Proximal Policy Optimization (PPO) policies, utilizing reward shaping designed around aggression, damage ratios, combo streaks, and pressure metrics.
+   * **Adaptive Combo Learner:** A strategy memory system (`strategy_memory.py`) dynamically analyzes match results, tracks opponent styles (e.g., zoning, rushdown, aerial), and selects optimal combo sequences to punish opponent patterns in real time.
+
+3. **Input Injection (C++ SendInput DLL)**
+   * **High Performance:** Standard Python keyboard simulation libraries suffer from high latency and predictability. This project uses a custom C++ DLL compiled with the Windows `SendInput` API.
+   * **Anti-Detection Mechanics:** The Python ctypes wrapper (`InputExecutor`) injects microsecond-level randomized delay and jitter (human-like tap timings) to mimic human reactions and avoid simple anti-cheat pattern detection.
+
+---
+
+## 📂 Project Architecture
+
+The workspace is organized into modular components that separate concerns across the perception-action loop:
 
 ```text
 AutonomousFighter/
-├── perception/          # Vision pipeline (OpenCV + YOLO)
-├── brain/               # RL environment & policy (Gymnasium + PPO)
-├── muscles/             # C++ input controller + Python wrapper
-├── api/                 # FastAPI WebSocket server
-├── scripts/             # Build & launch scripts
-├── main.py              # Orchestrator loop
-├── ui_app.py            # PyQt6 desktop UI (pure Python)
-└── requirements.txt     # Python dependencies
+├── api/                    # FastAPI WebSocket server for real-time telemetry streaming
+├── brain/                  # RL Gymnasium environments, policy wrappers, and strategy memory
+│   ├── models/             # Directory for trained PPO models (.zip format)
+│   └── learning/           # Persisted strategy memory state and fight telemetry histories
+├── muscles/                # Low-level C++ input automation DLL and ctypes wrapper
+│   ├── src/ & include/     # C++ SendInput source code
+│   └── CMakeLists.txt      # Build configuration for compilation
+├── perception/             # Vision pipeline (Screen capture, YOLO detector, HUD parser)
+├── common/                 # Shared settings loader and logging configurations
+├── scripts/                # Launch, test, build, and bootstrap automation utilities
+├── main.py                 # Core orchestrator loop binding perception, brain, and muscles
+├── ui_app.py               # Modern PyQt6 native desktop dashboard
+├── requirements.txt        # Python dependency list
+└── .env.example            # Environment configuration template
 ```
 
-## Quick Start
+---
 
-### 1) Launch the System
+## 🛠️ Installation & Setup
 
+Follow these steps to compile the native modules and configure the combat engine environment on Windows:
+
+### 1. Clone & Set Up the Python Environment
+Initialize a Python virtual environment and install dependencies:
 ```powershell
-# Automatic launch (finds Shadow Fight Arena window)
-python launcher.py
-
-# Or with specific game window
-python launcher.py --window-title "My Game Title"
-```
-
-The launcher will:
-- ✓ Start the bot backend (Python + C++)
-- ✓ Launch the native desktop UI (PyQt6)
-- ✓ Connect to the game window
-- ✓ Begin capturing and processing
-
-### 2) Desktop UI Features
-
-- **Live Game Feed**: Real-time capture with YOLO bounding boxes
-- **Telemetry**: FPS, current action, confidence, attack streak
-- **Detections Table**: Live detection data with coordinates
-- **Status Indicator**: Connection status (Online/Offline)
-- **Dark Theme**: Orange/dark modern interface
-
-```powershell
-cd C:\Users\Ayush\AutonomousFighter
+# Create virtual environment
 python -m venv .venv
+
+# Activate the virtual environment
 .\.venv\Scripts\Activate.ps1
+
+# Install requirements
 pip install -r requirements.txt
 ```
-
-Or use the bootstrap script:
-
+*Alternatively, you can run the bootstrap script:*
 ```powershell
-cd C:\Users\Ayush\AutonomousFighter
-./scripts/bootstrap.ps1
+.\scripts\bootstrap.ps1
 ```
 
-Optional: create a runtime environment file from `.env.example` and edit values.
-
-## 2) Build Muscles DLL (C++)
-
+### 2. Configure Environment Variables
+Copy the template configuration file to a live `.env` file:
 ```powershell
-cd C:\Users\Ayush\AutonomousFighter\muscles
+copy .env.example .env
+```
+Open `.env` in your editor and adjust the settings:
+* **`AF_YOLO_MODEL`**: The filename of your YOLOv8 weights (e.g., `yolov8n.pt` or `yolov8m.pt`).
+* **`AF_CAPTURE_LEFT`, `AF_CAPTURE_TOP`, `AF_CAPTURE_WIDTH`, `AF_CAPTURE_HEIGHT`**: Target region dimensions matching your game display window.
+* **`AF_TARGET_FPS`**: The target execution rate of the perception-action loop.
+
+### 3. Download Model Weights
+Model weights must be acquired separately and are **not** tracked in this repository due to file size constraints.
+* Download the desired **YOLOv8** model weights (e.g., `yolov8n.pt` or `yolov8m.pt`) from the [Ultralytics Release page](https://github.com/ultralytics/assets/releases).
+* Place the `.pt` file(s) directly into the root directory of this project (`AutonomousFighter/`).
+
+### 4. Compile the Muscles DLL (C++)
+The low-level input automation requires compiling the native C++ DLL. Make sure you have Visual Studio (with C++ build tools) and CMake installed:
+```powershell
+cd muscles
 cmake -S . -B build
 cmake --build build --config Release
 ```
+This produces the compiled library:
+`muscles/build/Release/autonomous_fighter_muscles.dll`
 
-Expected output DLL:
+---
 
-- `muscles/build/Release/autonomous_fighter_muscles.dll`
+## 🚀 Running the Engine
 
-## 3) Smoke Test Native Input Wrapper
+The engine provides an automated startup script that locates the active game window and spins up all backend/frontend processes.
 
+### Launching with UI (PyQt6 Desktop App)
+Run the launcher script:
 ```powershell
-cd C:\Users\Ayush\AutonomousFighter
-python -m muscles.python_wrapper
+python launcher.py
 ```
+This launcher automatically:
+1. Locates the active **Shadow Fight Arena** game window.
+2. Launches the backend combat orchestrator loop.
+3. Spins up the FastAPI WebSocket server (`api/`).
+4. Launches the native dark-themed PyQt6 Control Panel displaying:
+   * **Live Gameplay Feed:** Live frame rendering with YOLO bounding boxes and HUD ROI overlays.
+   * **Perception Confidence:** Target lock status bar.
+   * **Active Commands:** Live combat actions executed by the agent.
+   * **Strategy Metrics:** Combo sequences and strategy styles chosen by the adaptive learner.
 
-## 4) Train PPO Brain
+---
+
+## 🧠 Training & Evaluation
+
+To retrain the PPO brain policy on custom combat scenarios:
 
 ```powershell
-cd C:\Users\Ayush\AutonomousFighter
-python -m brain.train_ppo
-```
-
-Advanced training options:
-
-```powershell
-cd C:\Users\Ayush\AutonomousFighter
+# Train the PPO agent
 python -m brain.train_ppo --timesteps 1000000 --output-dir brain/models --n-envs 4 --device cuda
-```
 
-Run evaluation:
-
-```powershell
-cd C:\Users\Ayush\AutonomousFighter
+# Evaluate a trained policy model
 python -m brain.evaluate --model brain/models/ppo_aggressive_fighter.zip --episodes 20 --max-steps 1500
 ```
 
-## 5) Run Full Orchestrator + API
+---
 
+## 🧪 CI & Verification
+
+Unit and integration tests are located in the `tests/` directory. Run them to verify telemetry, settings, and state extraction:
 ```powershell
-cd C:\Users\Ayush\AutonomousFighter
-python main.py --dll muscles/build/Release/autonomous_fighter_muscles.dll --yolo yolov8n.pt --left 0 --top 0 --width 1280 --height 720 --target-fps 30
-```
-
-Model-driven runtime with active window tracking:
-
-```powershell
-cd C:\Users\Ayush\AutonomousFighter
-python main.py --dll muscles/build/Release/autonomous_fighter_muscles.dll --model brain/models/ppo_aggressive_fighter.zip --window-title "Your Game Window" --target-fps 30
-```
-
-You can now override most runtime values using environment variables:
-
-- `AF_API_HOST`, `AF_API_PORT`
-- `AF_YOLO_MODEL`
-- `AF_CAPTURE_LEFT`, `AF_CAPTURE_TOP`, `AF_CAPTURE_WIDTH`, `AF_CAPTURE_HEIGHT`
-- `AF_TARGET_FPS`
-- `AF_KEY_TAP_MIN_MS`, `AF_KEY_TAP_MAX_MS`
-
-You can also run the telemetry API standalone:
-
-```powershell
-cd C:\Users\Ayush\AutonomousFighter
-python -m api.run
-```
-
-## 6) Run Dashboard
-
-```powershell
-cd C:\Users\Ayush\AutonomousFighter\ui
-npm install
-npm run dev
-```
-
-Dashboard URL:
-
-- `http://localhost:3000`
-
-WebSocket source:
-
-- `ws://127.0.0.1:8000/ws`
-
-## Notes
-
-- The perception parser expects YOLO classes like `player` and `enemy`. Update class names in `perception/state_extractor.py` to match your trained labels.
-- Reward shaping in `brain/reward.py` heavily biases offense: pressure, combos, and forward movement.
-- Key mappings are configured in `main.py` and should be aligned with in-game controls.
-- API health and connection stats endpoints are available at `/health` and `/stats`.
-- The dashboard supports WebSocket auto-reconnect and displays the annotated YOLO live feed from the backend.
-- Fight learning artifacts are written to `brain/learning/episodes/`, including per-fight screenshots and `summary.json` files.
-- Labeled training data is written to `brain/learning/labels/<episode_id>/images/` and `brain/learning/labels/<episode_id>/labels/` as YOLO-style player/enemy annotations.
-- Opponent-style memory is persisted in `brain/learning/strategy_state.json` and used at runtime to pick punish combos for aerial, zoning, rushdown, and scramble patterns.
-- Runtime strategy now includes adaptive aggression modes, dynamic combo cadence, anti-repeat combo lockouts, and feint injection to avoid predictable pressure loops.
-
-## CI and Verification
-
-- Python CI workflow: `.github/workflows/python-ci.yml`
-- UI CI workflow: `.github/workflows/ui-ci.yml`
-
-Run backend tests locally:
-
-```powershell
-cd C:\Users\Ayush\AutonomousFighter
+# Run backend tests
 pytest -q
 ```
-
-Or use:
-
+*Alternatively, execute the test script:*
 ```powershell
-cd C:\Users\Ayush\AutonomousFighter
-./scripts/test.ps1
-```
-
-## Dev and Release Automation
-
-Launch backend + UI together:
-
-```powershell
-cd C:\Users\Ayush\AutonomousFighter
-./scripts/dev-up.ps1 -Dll "muscles/build/Release/autonomous_fighter_muscles.dll" -Yolo "yolov8n.pt"
-```
-
-Create a release zip:
-
-```powershell
-cd C:\Users\Ayush\AutonomousFighter
-./scripts/release.ps1
+.\scripts\test.ps1
 ```

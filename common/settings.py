@@ -61,7 +61,7 @@ def _as_roi(name: str, default: Tuple[float, float, float, float]) -> Tuple[floa
 class RuntimeSettings:
     api_host: str = "127.0.0.1"
     api_port: int = 8001
-    yolo_model: str = "yolov8n.pt"
+    yolo_model: str = "yolov8m.pt"
     capture_left: int = 0
     capture_top: int = 0
     capture_width: int = 1280
@@ -91,7 +91,7 @@ def load_runtime_settings() -> RuntimeSettings:
     return RuntimeSettings(
         api_host=os.getenv("AF_API_HOST", "127.0.0.1"),
         api_port=_as_int("AF_API_PORT", 8001),
-        yolo_model=os.getenv("AF_YOLO_MODEL", "yolov8n.pt"),
+        yolo_model=os.getenv("AF_YOLO_MODEL", "yolov8m.pt"),
         capture_left=_as_int("AF_CAPTURE_LEFT", 0),
         capture_top=_as_int("AF_CAPTURE_TOP", 0),
         capture_width=_as_int("AF_CAPTURE_WIDTH", 1280),

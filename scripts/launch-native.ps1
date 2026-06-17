@@ -1,6 +1,6 @@
 param(
   [string]$Dll = "muscles/build/Release/autonomous_fighter_muscles.dll",
-  [string]$Yolo = "yolov8n.pt",
+  [string]$Yolo = "yolov8m.pt",
   [string]$WindowTitle = "Shadow Fight Arena",
   [string]$Model = ""
 )

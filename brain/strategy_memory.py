@@ -199,13 +199,16 @@ class FightLabelExporter:
         self.frame_stride = frame_stride
 
     def export_frame(self, episode_id: str, frame_index: int, packet: Dict[str, Any]) -> str | None:
-        frame_shape = packet.get("frame_shape") or []
-        if len(frame_shape) < 2:
-            return None
-
+        raw_frame = packet.get("raw_frame")
         encoded = packet.get("live_frame_jpeg")
         detections = packet.get("detections") or []
-        if not encoded or len(detections) < 2:
+        if raw_frame is None and not encoded:
+            return None
+        if len(detections) < 2:
+            return None
+
+        frame_shape = raw_frame.shape if raw_frame is not None else (packet.get("frame_shape") or [])
+        if len(frame_shape) < 2:
             return None
 
         player, enemy = assign_player_enemy([_detection_from_dict(item) for item in detections])
@@ -221,7 +224,11 @@ class FightLabelExporter:
         image_path = images_dir / f"frame_{frame_index:04d}.jpg"
         label_path = labels_dir / f"frame_{frame_index:04d}.txt"
 
-        image_path.write_bytes(base64.b64decode(encoded))
+        if raw_frame is not None:
+            import cv2
+            cv2.imwrite(str(image_path), raw_frame)
+        else:
+            image_path.write_bytes(base64.b64decode(encoded))
         width = float(frame_shape[1])
         height = float(frame_shape[0])
         label_path.write_text(
@@ -848,15 +855,24 @@ class AdaptiveComboLearner:
         return "scramble"
 
     def _save_snapshot(self, packet: Dict[str, Any], label: str, frame_index: int) -> str | None:
+        raw_frame = packet.get("raw_frame")
         encoded = packet.get("live_frame_jpeg")
-        if not encoded or self._episode_id is None:
+        if raw_frame is None and not encoded:
+            return None
+        if self._episode_id is None:
             return None
 
-        image_bytes = base64.b64decode(encoded)
         episode_folder = self.episode_dir / self._episode_id
         episode_folder.mkdir(parents=True, exist_ok=True)
         snapshot_path = episode_folder / f"{label}_{frame_index:04d}.jpg"
-        snapshot_path.write_bytes(image_bytes)
+
+        if raw_frame is not None:
+            import cv2
+            cv2.imwrite(str(snapshot_path), raw_frame)
+        else:
+            image_bytes = base64.b64decode(encoded)
+            snapshot_path.write_bytes(image_bytes)
+
         self._episode_latest_snapshot = str(snapshot_path)
         return str(snapshot_path)
 

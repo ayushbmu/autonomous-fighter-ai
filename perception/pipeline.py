@@ -82,6 +82,38 @@ class PerceptionPipeline:
         self.fps_counter = FpsCounter()
         self.hud_config = hud_config or HudEstimatorConfig()
 
+    def process_frame(self, frame: np.ndarray) -> tuple[List[Detection], Dict[str, Any] | None, Dict[str, Any]]:
+        """Run YOLO detector and HUD estimation on a frame, returning detections, state, and hud_debug."""
+        detections = self.detector.detect(frame)
+        relative_state = extract_relative_state(
+            detections=detections,
+            frame_width=frame.shape[1],
+            frame_height=frame.shape[0],
+        )
+
+        player_health = _estimate_health_fill(frame, self.hud_config.health_left_roi)
+        enemy_health = _estimate_health_fill(frame, self.hud_config.health_right_roi)
+        shadow_meter = _estimate_shadow_fill(frame, self.hud_config)
+
+        state = asdict(relative_state) if relative_state else None
+        if state is not None:
+            state["player_health"] = player_health
+            state["enemy_health"] = enemy_health
+            state["shadow_meter"] = shadow_meter
+            state["shadow_full"] = shadow_meter >= 0.98
+
+        hud_debug = {
+            "player_health": player_health,
+            "enemy_health": enemy_health,
+            "shadow_meter": shadow_meter,
+            "shadow_full": shadow_meter >= 0.98,
+            "health_left_roi": self.hud_config.health_left_roi,
+            "health_right_roi": self.hud_config.health_right_roi,
+            "shadow_roi": self.hud_config.shadow_roi,
+        }
+        
+        return detections, state, hud_debug
+
     def step(self) -> Dict[str, Any]:
         frame = self.capture.grab_latest_bgr()
         fps = self.fps_counter.tick()
